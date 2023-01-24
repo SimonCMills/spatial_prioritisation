@@ -12,6 +12,11 @@ pct_treecover <- read_stars("data/pct_treecover_in_pasture.tif")
 pct_forest <- read_stars("data/pct_contig_forest.tif")
 # cells that contain 0 forest are masked out. Set these to 0
 # pct_forest[pct_urban[] + pct_waterbody[] == 1] <- 0
+c(elevation, pct_urban, pct_waterbody, pct_treecover, pct_forest)
+
+ele_dt[, pct_unmasked := 1 - (pct_urban + pct_water)]
+ele_dt[is.na(avg_treecover), avg_treecover := 0]
+ele_dt[is.na(pct_forest), pct_forest := 0]
 
 # convert all layers into a single indexed data table 
 ele_sf <- elevation %>% 

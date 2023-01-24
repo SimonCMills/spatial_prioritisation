@@ -228,3 +228,8 @@ plot(check["sum_range_resc"], na.rm=T)
 
 hist(log(check[["sum_range"]]/mean(check[["sum_range"]], na.rm=T)))
 exp(2)
+
+
+sp_i <- spatial_input_layers %>% 
+    filter(species == "Aburria_aburri")
+

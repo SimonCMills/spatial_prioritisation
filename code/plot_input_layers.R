@@ -146,7 +146,7 @@ p_tc <- ggplot() +
           axis.text = element_text(colour="black"), 
           legend.position = "bottom", 
           legend.text = element_text(angle=45, hjust=1, vjust=1)) +
-    labs(x="", y="", fill="", title = "(d) Proportion wildlife friendly")
+    labs(x="", y="", fill="", title = "(d) Mean wildlife friendliness")
 
 
 plot_all <- egg::ggarrange(p_ele, p_urban, p_forest, p_tc, ncol=4)
@@ -204,6 +204,111 @@ ggplot() +
 
 ggsave("Woodquail_range.png")
 
+
+sp_i <- spatial_input_layers %>% 
+    filter(species == "Zonotrichia_capensis")
+
+all2[["rsparrow"]][sp_i$index] <- sp_i$amt_occ
+
+ggplot() +
+    geom_sf(data=mountains, fill="grey90", col=NA) +
+    geom_stars(data=all2["rsparrow"]) +
+    scale_fill_viridis_c(na.value = NA) +
+    geom_sf(data=Bogota_df, pch=24, size=3, fill="white",col="black") +
+    geom_sf(data=V_border, fill=NA, col="black") +
+    coord_sf(xlim=dims[c("xmin", "xmax")], 
+             ylim = dims[c("ymin", "ymax")]) +
+    scale_x_continuous(expand=c(0,0)) +
+    scale_y_continuous(expand=c(0,0)) +
+    theme_bw() +
+    theme(panel.background = element_rect(fill="grey96"), 
+          panel.grid=element_blank(), 
+          axis.text = element_text(colour="black"), 
+          legend.position = "bottom", 
+          legend.text = element_text(angle=45, hjust=1, vjust=1)) +
+    labs(x="", y="", fill="", title = "") +
+    guides(fill="none")
+
+ggsave("Ruf_col_sparrow_preds.png")
+
+
+
+sp_i <- spatial_input_layers %>% 
+    filter(species == "Odontophorus_strophium")
+
+all2[["wquail"]][sp_i$index] <- sp_i$amt_occ
+
+ggplot() +
+    geom_sf(data=mountains, fill="grey90", col=NA) +
+    geom_stars(data=all2["wquail"]) +
+    scale_fill_viridis_c(na.value = NA) +
+    geom_sf(data=Bogota_df, pch=24, size=3, fill="white",col="black") +
+    geom_sf(data=V_border, fill=NA, col="black") +
+    coord_sf(xlim=dims[c("xmin", "xmax")], 
+             ylim = dims[c("ymin", "ymax")]) +
+    scale_x_continuous(expand=c(0,0)) +
+    scale_y_continuous(expand=c(0,0)) +
+    theme_bw() +
+    theme(panel.background = element_rect(fill="grey96"), 
+          panel.grid=element_blank(), 
+          axis.text = element_text(colour="black"), 
+          legend.position = "bottom", 
+          legend.text = element_text(angle=45, hjust=1, vjust=1)) +
+    labs(x="", y="", fill="", title = "") +
+    guides(fill="none")
+
+ggsave("Wquail_preds.png")
+
+## lastly, do species richness
+all2[["wquail"]] <- NA
+all2[["wquail"]][new$index] <- new$V1
+
+ggplot() +
+    geom_sf(data=mountains, fill="grey90", col=NA) +
+    geom_stars(data=all2["wquail"]) +
+    scale_fill_viridis_c(na.value = NA) +
+    geom_sf(data=Bogota_df, pch=24, size=3, fill="white",col="black") +
+    geom_sf(data=V_border, fill=NA, col="black") +
+    coord_sf(xlim=dims[c("xmin", "xmax")], 
+             ylim = dims[c("ymin", "ymax")]) +
+    scale_x_continuous(expand=c(0,0)) +
+    scale_y_continuous(expand=c(0,0)) +
+    theme_bw() +
+    theme(panel.background = element_rect(fill="grey96"), 
+          panel.grid=element_blank(), 
+          axis.text = element_text(colour="black")) +
+    labs(x="", y="", fill="", title = "") 
+ggsave("Species_richness.png")
+
+
+### plot points 
+df_ptInfo <- readRDS("../Colombia_rangeLims/data/point_ele_Eastern Cordillera.rds") %>%
+    filter(!grepl("^CC", point), ele_jaxa >= 875) %>%
+    st_transform(crs = st_crs(elevation))
+
+ggplot() +
+    geom_sf(data=mountains, fill="grey90", col=NA) +
+    #geom_stars(data=all2["rsparrow"]) +
+    scale_fill_viridis_c(na.value = NA) +
+    geom_sf(data=df_ptInfo) +
+    geom_sf(data=Bogota_df, pch=24, size=3, fill="white",col="black") +
+    geom_sf(data=V_border, fill=NA, col="black") +
+    coord_sf(xlim=dims[c("xmin", "xmax")], 
+             ylim = dims[c("ymin", "ymax")]) +
+    scale_x_continuous(expand=c(0,0)) +
+    scale_y_continuous(expand=c(0,0)) +
+    theme_bw() +
+    theme(panel.background = element_rect(fill="grey96"), 
+          panel.grid=element_blank(), 
+          axis.text = element_text(colour="black"), 
+          legend.position = "bottom", 
+          legend.text = element_text(angle=45, hjust=1, vjust=1)) +
+    labs(x="", y="", fill="", title = "") +
+    guides(fill="none")
+ggsave("Survey_locations.png")
+
+
+pts <- st_coordinates(df_ptInfo) %>% as_tibble
 
 
 
