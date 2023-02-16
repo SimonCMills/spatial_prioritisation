@@ -101,9 +101,11 @@ Trait_Descr <- data.frame(trait_name = c("Diet.Fruit", "Diet.Vect", "Diet.Inv", 
 ## Computing distances between species based on functional traits
 sp_dist <- funct.dist(Trait_db, Trait_Descr, metric = "gower")
 
-## Compute multidimensional functional spaces and assess their quality for use in the loop to check whether limited by species number.
+## Compute multidimensional functional spaces and assess their quality for use 
+# in the loop to check whether limited by species number.
 dist_qual <- quality.fspaces(sp_dist, maxdim_pcoa = 10,
-                             deviation_weighting = "absolute", fdist_scaling = FALSE, fdendro = "average")
+                             deviation_weighting = "absolute", 
+                             fdist_scaling = FALSE, fdendro = "average")
 
 #### Binomial sampling ####
 
