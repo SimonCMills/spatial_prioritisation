@@ -1,12 +1,15 @@
 # initial exploration of EC model (first draft; there are issues with it)
 
 ## housekeeping ----
-library(cmdstanr); library(brms); library(flocker); library(dplyr)
+library(brms); library(flocker); library(dplyr)
 
 ## rebuild fit from incomplete fit ----
-rebuilt_fit_fname <- "stan_out/EC_model_run5_woody_veg_effs/rebuilt_fit.rds"
+A <- readRDS("stan_out/EC_model_run5_woody_veg_effs/A.rds")
+fd <- readRDS("stan_out/EC_model_run5_woody_veg_effs/fd.rds")
+
+rebuilt_fit_fname <- "stan_out/EC_model_run6_woody_veg_effs/rebuilt_fit.rds"
 if(!file.exists(rebuilt_fit_fname)) {
-    fit_fnames <- list.files("stan_out/EC_model_run5_woody_veg_effs/", 
+    fit_fnames <- list.files("stan_out/EC_model_run6_woody_veg_effs/", 
                              ".csv",
                              full.names = TRUE)
     
@@ -29,10 +32,6 @@ if(!file.exists(rebuilt_fit_fname)) {
     
     # convert list of stanfits to single stanfit
     sfits <- rstan::sflist2stanfit(fit_samples)
-    
-    # build object
-    A <- readRDS("stan_out/EC_model_run5_woody_veg_effs/A.rds")
-    fd <- readRDS("stan_out/EC_model_run5_woody_veg_effs/fd.rds")
     
     fit_empty <- flock(
         # occupancy
@@ -61,7 +60,7 @@ if(!file.exists(rebuilt_fit_fname)) {
             # elevational range
             relev + relev2 + 
             # ranefs
-            (1 + pasture + paramo + woody_veg_sc + relev + relev2|species) + 
+            (1 + pasture + woody_veg_sc + relev + relev2|species) + 
             (1|sr) + (1|sp_sr) + (1|sp_cl) +
             (1 + pasture|gr(phylo, cov = A)), # try to fit phylo woody veg too?
         # detection            
@@ -79,9 +78,19 @@ if(!file.exists(rebuilt_fit_fname)) {
     fit_empty$fit <- sfits
     fit <- rename_pars(fit_empty)
     saveRDS(fit, rebuilt_fit_fname)
+} else {
+    fit <- readRDS(rebuilt_fit_fname)
 }
-fit <- readRDS(rebuilt_fit_fname)
+# fit <- readRDS(rebuilt_fit_fname)
 print(fit)
+
+## species list for Emma ----
+# lookup <- read.csv("../Colombia/colombia_birds/outputs/initial_species_list.csv")
+# species_list <- data.frame(HBW = unique(pred_data$species)) %>%
+#     mutate(HBW = gsub("_", " ", HBW)) %>%
+#     left_join(., lookup) %>%
+#     as_tibble
+# saveRDS(species_list, "species_list_for_Emma.rds")
 
 ## predictions ----
 pred_data_species <- fd$data %>%
@@ -90,6 +99,32 @@ pred_data_species <- fd$data %>%
          log_mass_sc, elev_breadth, elev_breadth_sc, elev_median, elev_median_sc,
          phylo) %>%
   unique
+
+# note: with this method only exact to 3rd decimal place
+wveg_scale <- fd$data %>%
+    select(point, species, woody_veg) %>%
+    unique %>%
+    pull(woody_veg) %>%
+    sd
+wveg_mean <- fd$data %>%
+    select(point, species, woody_veg) %>%
+    unique %>%
+    pull(woody_veg) %>%
+    mean
+
+woody_veg_vals <- fd$data %>%
+    select(point, woody_veg, woody_veg_sc) %>%
+    unique %>%
+    mutate(woody_veg_sc2 = (woody_veg - wveg_mean)/wveg_scale)
+
+ggplot(woody_veg_vals, aes(woody_veg)) + 
+    geom_histogram(boundary = 0, binwidth=.05)
+
+ggplot(woody_veg_vals, aes(woody_veg_sc, woody_veg_sc2))
+wf_vals <- c("low_wf" = (.05 - wveg_mean)/wveg_scale,
+  "high_wf" = (.4 - wveg_mean)/wveg_scale,
+  "forest" = (1 - wveg_mean)/wveg_scale)
+
 
 woody_veg_range <- fit$data %>%
   group_by(pasture) %>%
@@ -119,96 +154,247 @@ pred_data <- pred_data_point %>%
 
 preds <- fitted_flocker(fit, type = "occupancy", CI = c(.1, .9),
                         new_data = pred_data,
-                        re_formula = ~ (1 + not_forest + woody_veg_sc + relev + relev2|species) +
+                        re_formula = ~ (1 + pasture + woody_veg_sc + relev + relev2|species) +
                           (1 + pasture|gr(phylo, cov = A)), 
-                        summarise = FALSE, ndraws = 500)
+                        summarise = T, ndraws = 500)
 pred_full <- bind_cols(pred_data, preds) %>%
-    as_tibble()
+    as_tibble() #%>%
+    # reshape2::melt(., id.vars = c(""))
 
-saveRDS(pred_full, "dataset_for_Zach_16-02-23.rds")
 
-## junk plotting ----
-# cu_cov <- readRDS("cu_cov.rds")
-# temp <- readRDS("temp_file.rds")
+# plot fixefs 
+fixefs <- fixef(fit) %>%
+    as_tibble(., rownames = "parameter") %>%
+    mutate(component = c("occ", "det")[grepl("occ", parameter)+1])
 
-cu_cov %>% head
+ggplot(fixefs, aes(Estimate, parameter, xmin = Q2.5, xmax=Q97.5)) +
+    geom_point() +
+    geom_linerange() +
+    geom_vline(xintercept = 0) +
+    facet_wrap(~component)
 
-tt <- cu_cov %>%
-  slice(1:1000) %>%
-  ungroup %>%
-  mutate(relev_new = (elev_ALOS - elev_median)/elev_breadth * 1.61)
 
-ggplot(tt, aes(relev, relev_new)) + geom_point() + geom_abline()
+# saveRDS(pred_full, "dataset_for_Zach_16-02-23.rds")
 
-summary(lm(relev~ relev_new, tt))
-pnorm(1.614/2)
+# preds ----
 
 library(ggplot2)
 
+preds <- fitted_flocker(fit, type = "occupancy", CI = c(.1, .9),
+                        new_data = pred_data,
+                        re_formula = ~ (1 + pasture + woody_veg_sc + relev + relev2|species) +
+                            (1 + pasture|gr(phylo, cov = A)), 
+                        summarise = FALSE, ndraws = 500)
 
-summ <- pred_full %>%
-  group_by(elev_ALOS, pasture, woody_veg_sc) %>%
-  summarise(SR = sum(estimate))
+pred_full <- bind_cols(pred_data, preds) %>%
+    as_tibble() %>%
+    mutate(
+        wveg_round = round(woody_veg_sc, 2), 
+        point_type = case_when(pasture == -1 ~ "forest", 
+                               pasture == 1 & wveg_round == -1.40 ~ "low-wf pasture",
+                               pasture == 1 & wveg_round == -0.67 ~ "high-wf pasture")
+    ) %>%
+    reshape2::melt(.,
+                   measure.vars = paste0("iter_", 1:500),
+                   id.vars = c("species", "elev_ALOS", "point_type", "forest_dep")) %>%
+    mutate(id_iter = as.integer(as.factor(variable)), 
+           id_iter_species = interaction(id_iter, species, elev_ALOS))
 
+# n_species * n_iter
+n_sp_iter <- length(levels(pred_full$id_iter_species))
 
-summ2 <- pred_full %>%
-  # filter(elev_median < 3000) %>%
-  group_by(species, forest_dep, elev_median, elev_ALOS) %>%
-  summarise(RR1 = (estimate[pasture == -1]/estimate[pasture == 1][1]),
-            RR2 = (estimate[pasture == -1]/estimate[pasture == 1][2]), 
-            RR3 = (estimate[pasture == 1][1]/estimate[pasture == 1][2])) %>%
-  group_by(species, forest_dep, elev_median) %>%
-  summarise(RR1 = mean(RR1),
-            RR2 = mean(RR2), 
-            RR3 = mean(RR3))
+pred_full2 <- pred_full %>%
+    mutate(value2 = boot::inv.logit(
+        boot::logit(value) + rnorm(n_sp_iter, 0, 2.7)[id_iter_species]
+    )
+    )
 
-ggplot(summ, aes(elev_ALOS, SR, col=factor(pasture))) + geom_point()
+saveRDS(pred_full2, "outputs/pred_full2.rds")
 
-## RR1 is the comparison with wildlife unfriendly pasture
-summ2 %>%
-  #left_join(., temp) %>%
-ggplot(aes(elev_median, (RR1))) + 
-    geom_point() + 
-    facet_wrap(~forest_dep) +
-  scale_y_continuous(trans = "log", breaks = 10^(-5:10)) +
-    geom_hline(yintercept = 1) +
-  stat_smooth() +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-summ2 %>%
-    #left_join(., temp) %>%
-    ggplot(aes(elev_median, (RR3))) + 
-    geom_point() + 
-    facet_wrap(~forest_dep) +
-    scale_y_continuous(trans = "log", breaks = 10^(-5:10)) +
-    geom_hline(yintercept = 1) +
-    stat_smooth() +
-    theme_bw() +
-    theme(panel.grid.minor = element_blank())
+library(ggplot2)
+summ <- pred_full2 %>%
+    group_by(elev_ALOS, point_type, variable) %>%
+    summarise(SR = sum(value2)) %>%
+    group_by(elev_ALOS, point_type) %>%
+    summarise(estimate = mean(SR), 
+              lwr = quantile(SR, .05), 
+              upr = quantile(SR, .95))
 
 
-pred_full %>%
-    filter(species == "Zonotrichia_capensis") %>%
-    ggplot(aes(relev, estimate, col=pasture, ymin=Q10, ymax=Q90)) + 
-    geom_point() +
-    geom_linerange()
-
-pred_full %>%
-    filter(species == "Aburria_aburri") %>%
-    ggplot(aes(relev, estimate, col=pasture, ymin=Q10, ymax=Q90)) + 
-    geom_point() +
-    geom_linerange()
+ggplot(summ, aes(elev_ALOS, estimate, ymin = lwr, ymax = upr)) +
+    geom_line(aes(col = point_type)) +
+    geom_ribbon(aes(fill = point_type), alpha=.2)
 
 
-nrow(df)
-nrow(cu_cov)
-library(dplyr)
-df %>%
-  filter(abs(relev) < 0.01) %>%
-  select(relev, relev2) %>% plot
+summ2 <- pred_full2 %>%
+    group_by(elev_ALOS, point_type, variable, forest_dep) %>%
+    summarise(SR = sum(value2)) %>%
+    group_by(elev_ALOS, point_type, forest_dep) %>%
+    summarise(estimate = mean(SR), 
+              lwr = quantile(SR, .05), 
+              upr = quantile(SR, .95))
 
-df %>%
-  filter(abs(relev) < 0.01) %>%
-  select(relev) %>%
-  mutate(relev2 = relev^2) %>% points(., col="red", cex=.5)
+ggplot(summ2, aes(elev_ALOS, estimate, ymin = lwr, ymax = upr)) +
+    geom_line(aes(col = point_type)) +
+    geom_ribbon(aes(fill = point_type), alpha=.2) +
+    facet_wrap(~forest_dep)
+
+summ_sp <- pred_full2 %>%
+    group_by(point_type, species) %>%
+    summarise(n_pt = sum(value2)) %>%
+    group_by(species, point_type) %>%
+    summarise(estimate = mean(n_pt), 
+              lwr = quantile(n_pt, .05), 
+              upr = quantile(n_pt, .95))
+
+
+ggplot(summ_sp, aes(point_type, estimate)) + geom_violin() +
+    scale_y_continuous(trans="log", breaks = 2^(0:10))
+
+
+## sparing-sharing ----
+
+woody_veg_range2 <- woody_veg_range %>%
+    mutate(woody_veg_sc = wf_vals[3:1]) %>%
+    bind_rows(., tibble(pasture = 1, woody_veg_sc = (0-wveg_mean)/wveg_scale))
+
+pred_data_wf <- pred_data_point %>%
+    full_join(., woody_veg_range2) %>%
+    left_join(., pred_data_species) %>%
+    mutate(relev = (elev_ALOS - elev_median)/elev_breadth * 1.61,
+           relev2 = relev^2)
+
+preds_wf <- fitted_flocker(fit, type = "occupancy", CI = c(.1, .9),
+                        new_data = pred_data_wf,
+                        re_formula = ~ (1 + pasture + woody_veg_sc + relev + relev2|species) +
+                            (1 + pasture|gr(phylo, cov = A)), 
+                        summarise = FALSE, ndraws = 500)
+
+pred_full_wf <- bind_cols(pred_data_wf, preds_wf) %>%
+    as_tibble() %>%
+    mutate(
+        wveg_round = round(woody_veg_sc, 2), 
+        point_type = case_when(pasture == -1 ~ "forest", 
+                               pasture == 1 & wveg_round < -1 & wveg_round > -1.4 ~ "low_wf_pasture",
+                               pasture == 1 & wveg_round < -1.4 ~ "zero_wf_pasture",
+                               pasture == 1 & wveg_round > -1 ~ "high_wf_pasture")
+    ) %>%
+    reshape2::melt(.,
+                   measure.vars = paste0("iter_", 1:500),
+                   id.vars = c("species", "elev_ALOS", "point_type", "forest_dep")) %>%
+    mutate(id_iter = as.integer(as.factor(variable)), 
+           id_iter_species = interaction(id_iter, species, elev_ALOS))
+
+# n_species * n_iter
+n_sp_iter <- length(levels(pred_full$id_iter_species))
+
+pred_full2_wf <- pred_full_wf %>%
+    mutate(value2 = boot::inv.logit(
+        boot::logit(value) + rnorm(n_sp_iter, 0, 2.7)[id_iter_species]
+    )
+    )
+
+saveRDS(pred_full2_wf, "outputs/pred_full2_wf.rds")
+
+# SR
+n_pt_lscape <- 50
+sparing_sharing <- pred_full2_wf[pred_full2_wf$point_type == "forest",]
+sparing_sharing$sparing_high <- 
+    1 - 
+    (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "forest"])^(.05 * n_pt_lscape) * # probability of not being on 1 point
+    (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "zero_wf_pasture"])^(.95 * n_pt_lscape) # p(not on 19 points)
+
+sparing_sharing$sharing_high <- 1 - (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "low_wf_pasture"])^(n_pt_lscape)
+
+sparing_sharing$sparing_low <- 1 - 
+    (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "forest"])^(.4 * n_pt_lscape) * 
+    (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "zero_wf_pasture"])^(.6 * n_pt_lscape)
+
+sparing_sharing$sharing_low <- 1 - (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "high_wf_pasture"])^n_pt_lscape
+
+# N PT
+# sparing_sharing <- pred_full2_wf[pred_full2_wf$point_type == "forest",]
+# sparing_sharing$sparing_high <- 
+#     pred_full2_wf$value2[pred_full2_wf$point_type == "forest"] + # probability of not being on 1 point
+#     pred_full2_wf$value2[pred_full2_wf$point_type == "zero_wf_pasture"] # p(not on 19 points)
+# 
+# sparing_sharing$sharing_high <- 1 - (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "low_wf_pasture"])^20
+# 
+# sparing_sharing$sparing_low <- 1 - 
+#     (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "forest"])^8 * 
+#     (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "zero_wf_pasture"])^12
+# 
+# sparing_sharing$sharing_low <- 1 - (1 - pred_full2_wf$value2[pred_full2_wf$point_type == "high_wf_pasture"])^20
+
+
+
+summ_high <- sparing_sharing %>%
+    group_by(elev_ALOS, point_type, variable) %>%
+    summarise(SR_spr = sum(sparing_high), 
+              SR_shr = sum(sharing_high),
+              SR_diff = SR_spr - SR_shr) %>%
+    group_by(elev_ALOS, point_type) %>%
+    summarise_at(vars(SR_spr, SR_shr, SR_diff), 
+                 .funs = list(mean = mean, 
+                              lwr = function(x) quantile(x, .05), 
+                              upr = function(x) quantile(x, .95))
+    )
+
+summ_low <- sparing_sharing %>%
+    group_by(elev_ALOS, point_type, variable) %>%
+    summarise(SR_spr = sum(sparing_low), 
+              SR_shr = sum(sharing_low),
+              SR_diff = SR_spr - SR_shr) %>%
+    group_by(elev_ALOS, point_type) %>%
+    summarise_at(vars(SR_spr, SR_shr, SR_diff), 
+                 .funs = list(mean = mean, 
+                              lwr = function(x) quantile(x, .05), 
+                              upr = function(x) quantile(x, .95))
+    )
+
+# repackage
+new_colnames <- c("elev", "mean", "lwr", "upr")
+n_elevs <- length(unique(summ_high$elev_ALOS))
+
+summ2_high <- bind_rows(select(summ_high, contains("spr")) %>% setNames(new_colnames), 
+                        select(summ_high, contains("shr")) %>% setNames(new_colnames), 
+                        select(summ_high, contains("diff")) %>% setNames(new_colnames)) %>%
+    cbind(type = rep(c("spr", "shr", "diff"), each = n_elevs))
+
+summ2_low <- bind_rows(select(summ_low, contains("spr")) %>% setNames(new_colnames), 
+                       select(summ_low, contains("shr")) %>% setNames(new_colnames), 
+                       select(summ_low, contains("diff")) %>% setNames(new_colnames)) %>%
+    cbind(type = rep(c("spr", "shr", "diff"), each = n_elevs))
+
+
+p1 <- summ2_high %>%
+    filter(type != "diff") %>%
+    ggplot(aes(elev, mean, ymin=lwr, ymax=upr)) +
+    geom_line(aes(col=type)) +
+    geom_ribbon(aes(fill = type), alpha=.2)
+
+p2 <- summ2_high %>%
+    filter(type == "diff") %>%
+    ggplot(aes(elev, mean, ymin=lwr, ymax=upr)) +
+    geom_line(aes(col=type)) +
+    geom_ribbon(aes(fill = type), alpha=.2) +
+    geom_hline(yintercept = 0, lty = "longdash")
+
+p_both <- egg::ggarrange(p1, p2)
+# dir.create("figures")
+ggsave("figures/sparing_sharing_50_pts_high.png", plot = p_both)
+
+p1 <- summ2_low %>%
+    filter(type != "diff") %>%
+    ggplot(aes(elev, mean, ymin=lwr, ymax=upr)) +
+    geom_line(aes(col=type)) +
+    geom_ribbon(aes(fill = type), alpha=.2)
+
+p2 <- summ2_low %>%
+    filter(type == "diff") %>%
+    ggplot(aes(elev, mean, ymin=lwr, ymax=upr)) +
+    geom_line(aes(col=type)) +
+    geom_ribbon(aes(fill = type), alpha=.2) +
+    geom_hline(yintercept = 0, lty = "longdash")
+
+egg::ggarrange(p1, p2)
