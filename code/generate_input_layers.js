@@ -261,3 +261,11 @@ Export.image.toDrive({
     scale: 177,  
     region: EC
   });
+  
+Export.image.toDrive({
+    image: ele_EC_177m,
+    description: "elev_ALOS_177m_res",
+    folder: "gee_exports",
+    scale: 177,
+    region: EC
+  });
