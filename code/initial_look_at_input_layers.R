@@ -10,6 +10,8 @@ library(stars); library(sf); library(dplyr); library(data.table)
 pct_mask <- read_stars("outputs/proportion_unmasked_177m.tif")
 fc <- read_stars("outputs/pct_contig_forest_177m_res2.tif")
 tc <- read_stars("outputs/pct_treecover_in_pasture_177m_res.tif")
+#fc_2021 <- read_stars("outputs/pct_contig_forest_2021_177m_res.tif")
+#tc_2021 <- read_stars("outputs/pct_treecover_in_pasture_2021_177m_res.tif")
 ele <- read_stars("outputs/elev_ALOS_177m_res.tif")
 
 # format: set pixels that are highly masked (i.e either exist below 1000 m or 
@@ -52,10 +54,9 @@ lc_df <- st_as_sf(lc, as_points = TRUE, na.rm = TRUE)
 # convert to DT and format data
 lc_dt <- as.data.table(lc_df)
 lc_dt[, geometry := NULL]
-lc_dt[, `:=`(tc = as.integer(tc),
-             fc = as.logical(fc), 
+lc_dt[, `:=`(tc = as.integer(round(tc, 0)),
+             fc = as.integer(round(fc*100, 0)), 
              ele = as.integer(ele))]
-lapply(lc_dt, class)
 
 ## save outputs ----
 saveRDS(lc_dt, "outputs/input_layers_dt.rds")

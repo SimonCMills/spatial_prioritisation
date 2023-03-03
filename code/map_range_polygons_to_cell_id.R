@@ -8,7 +8,6 @@
 library(sf); library(stars); library(data.table); library(dplyr)
 
 # script for cluster
-load("inputs/files_for_cluster.rdata")
 
 # 821 species have a match. Were are the others?
 # TO DO: resolve taxonomic mismatches
@@ -22,8 +21,10 @@ species_subset <- gsub(" ", "_", ayerbe_maps_trim$Species)
 ## sod it just do it locally. 
 species_subset <- gsub(" ", "_", ayerbe_maps_trim$Species)
 
-for(i in 95:length(species_subset)) {
+for(i in 167:length(species_subset)) {
     print(i)
+    if(i %% 50 == 0) file.remove(list.files(tempdir(), full.names = TRUE)) 
+    
     r <- ayerbe_maps_trim[i,] %>% 
         mutate(in_range = 1) %>%
         st_rasterize(., template = grid)
