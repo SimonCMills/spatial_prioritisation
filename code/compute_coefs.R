@@ -4,28 +4,33 @@
 # (species, iteration) combination rather than repeating it for every 
 # (species, cell) combination. 
 
-# housekeeping
+## housekeeping ----
 library(flocker); library(dplyr); library(brms); library(data.table)
 
-fit_full <- readRDS("stan_out/EC_model_run6_woody_veg_effs/rebuilt_fit.rds")
-fit <- fit_full
-
-# thin model
+## thin model ----
 # when you compute the lpo for a subset of draws it still seems to spike memory, 
 # so thin down to a small object that you can work with temporarily on laptop
-draws_per_chain <- ndraws(fit_full)/nchains(fit_full)
-thinning <- 20
-draw_ids <- seq(1, draws_per_chain, thinning)
 
-for(i in seq_len(nchains(fit_full))) {
-    fit$fit@sim$samples[[i]] <- fit_full$fit@sim$samples[[i]][draw_ids,]
-    attr(fit$fit@sim$samples[[i]], "sampler_params") <-
-        attr(fit_full$fit@sim$samples[[i]], "sampler_params")[draw_ids,]
+if(!file.exists("outputs/rebuilt_fit_thinned.rds")) {
+    fit_full <- readRDS("stan_out/EC_model_run6_woody_veg_effs/rebuilt_fit.rds")
+    fit <- fit_full
+    
+    draws_per_chain <- ndraws(fit_full)/nchains(fit_full)
+    thinning <- 20
+    draw_ids <- seq(1, draws_per_chain, thinning)
+    
+    for(i in seq_len(nchains(fit_full))) {
+        fit$fit@sim$samples[[i]] <- fit_full$fit@sim$samples[[i]][draw_ids,]
+        attr(fit$fit@sim$samples[[i]], "sampler_params") <-
+            attr(fit_full$fit@sim$samples[[i]], "sampler_params")[draw_ids,]
+    }
+    
+    fit$fit@sim$thin <- thinning
+    fit$fit@sim$n_save <- rep(length(draw_ids), nchains(fit))
+    rm(fit_full)
+} else {
+    fit <- readRDS("outputs/rebuilt_fit_thinned.rds")
 }
-
-fit$fit@sim$thin <- thinning
-fit$fit@sim$n_save <- rep(length(draw_ids), nchains(fit))
-rm(fit_full)
 
 # get closure unit covariates 
 # cu_cov <- readRDS("../sparing_sharing_elevation/cu_cov.rds")
@@ -184,6 +189,30 @@ phylo_indexing <- match(uc_full$phylo[uc_index], phylo_rnames)
 # combine fixed effects and two random effects
 pasture_term <- pasture_term1 + pasture_term2 + pasture_term3[phylo_indexing,]
 
+
+## spatial terms ----
+sd_sr <- rstan::extract(fit$fit, 
+                        paste0("sd_sr__occ_Intercept"), 
+                        permuted = FALSE) %>%
+    reshape2::melt(.) %>% 
+    pull(value)
+
+sd_sp_cl <- rstan::extract(fit$fit, 
+                           paste0("sd_sp_cl__occ_Intercept"), 
+                           permuted = FALSE) %>%
+    reshape2::melt(.) %>% 
+    pull(value)
+
+sd_sp_sr <- rstan::extract(fit$fit, 
+                           paste0("sd_sp_sr__occ_Intercept"), 
+                           permuted = FALSE) %>%
+    reshape2::melt(.) %>% 
+    pull(value)
+
+spatial_terms <- data.table(sd_sr, 
+                            sd_sp_cl, 
+                            sd_sp_sr)
+
 ## save coefficients ----
 # store outputs in single object
 out <- list(species = uc_full$species[uc_index],
@@ -192,7 +221,8 @@ out <- list(species = uc_full$species[uc_index],
             relev_term = relev_term,
             relev2_term = relev2_term,
             woody_veg_sc_term = woody_veg_sc_term, 
-            pasture = pasture_term)
+            pasture = pasture_term, 
+            spatial_terms = spatial_terms)
 
 ## pass elev_median, elev_breadth, and woody_veg scaling through here?
 saveRDS(out, "outputs/lpo_and_coefs_EC.rds")
