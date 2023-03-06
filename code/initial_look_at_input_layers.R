@@ -58,5 +58,7 @@ lc_dt[, `:=`(tc = as.integer(round(tc, 0)),
              fc = as.integer(round(fc*100, 0)), 
              ele = as.integer(ele))]
 
+setcolorder(lc_dt, c("id_cell", "ele", "tc", "fc"))
+
 ## save outputs ----
-saveRDS(lc_dt, "outputs/input_layers_dt.rds")
+lc_dt <- saveRDS(lc_dt, "outputs/input_layers_dt.rds")
