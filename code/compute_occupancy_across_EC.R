@@ -1,9 +1,22 @@
+## compute occupancy across Eastern Cordillera
 
 ## housekeeping ----
-library(data.table); library(dplyr)
+library(data.table); library(dplyr);
+
+# function to clump cell ids (for including spatial terms)
+clump_id_cell <- function(id_cell, grain) {
+    x_pos <- ceiling(id_cell/3031)
+    y_pos <- id_cell %% 3031 
+    
+    y_new <- ceiling(y_pos/grain)
+    x_new <- ceiling(x_pos/grain)
+    (y_new - 1) * max(x_new) + x_new
+}
 
 # extract some scaling parameters for use downstream 
-cu_cov <- readRDS("stan_out/EC_model_run6_woody_veg_effs/cu_cov.rds")
+# note: this file was originally saved at: 
+# stan_out/EC_model_run6_woody_veg_effs/cu_cov.rds
+cu_cov <- readRDS("outputs/cu_cov.rds")
 woody_veg_cent <- attr(cu_cov$woody_veg_sc, "scaled:center")
 woody_veg_scale <- attr(cu_cov$woody_veg_sc, "scaled:scale")
 dt_ele_scaling <- cu_cov[, c("species", "elev_breadth", "elev_median")] %>%
@@ -15,8 +28,7 @@ rm(cu_cov)
 start <- Sys.time()
 
 ## read in range info ----
-# locally just use first 5 species (remove for full job on cluster)
-fnames <- list.files("outputs/in_range/", full.names = TRUE)[1:5]
+fnames <- list.files("outputs/in_range/", full.names = TRUE)
 species_names <- gsub(".*in_range/(.*).rds", "\\1", fnames)
 
 # read in
@@ -40,15 +52,18 @@ setnames(dt_cov, "tc", "woody_veg_sc")
 
 
 ## read in coefficients ----
-dt_coef <- readRDS("outputs/lpo_and_coefs_EC.rds")
+coefs <- readRDS("outputs/lpo_and_coefs_EC.rds")
 # for a first glance output, summarise across rows (30 iterations). Obviously
 # will later change this to keep full posterior through analysis pipeline. 
-dt_coef <- data.table(species = dt_coef$species, 
-                      relev_term = rowMeans(dt_coef$relev_term), 
-                      relev2_term = rowMeans(dt_coef$relev2_term), 
-                      woody_veg_sc_term = rowMeans(dt_coef$woody_veg_sc_term),
-                      pasture = rowMeans(dt_coef$pasture),
-                      lpo = rowMeans(dt_coef$lpo))
+dt_coef <- data.table(species = rep(coefs$species, 28), # recycled
+                      draw = rep(1:28, each = length(coefs$species)),
+                      relev_term = as.vector(coefs$relev_term), 
+                      relev2_term = as.vector(coefs$relev2_term), 
+                      woody_veg_sc_term = as.vector(coefs$woody_veg_sc_term),
+                      pasture = as.vector(coefs$pasture),
+                      lpo = as.vector(coefs$lpo))
+
+dt_spatial <- coefs$spatial_terms
 
 
 ## join range with cov DTs & scale elev ----
@@ -62,38 +77,42 @@ dt_ranges[dt_ele_scaling,
 dt_ranges[,ele := NULL]
 
 ## calculate occupancy ----
-dt_ranges[dt_coef, occ := (
-    i.lpo + 
-        i.relev_term * relev +
-        i.relev2_term * relev^2 +
-        # pasture
-        (1 - fc/100) * (i.pasture * 1) + 
-        (1 - fc/100) * (i.woody_veg_sc_term * woody_veg_sc) + 
-        # forest
-        (fc/100) * (i.pasture * -1) +
-        (fc/100) * (i.woody_veg_sc_term * (1 - woody_veg_cent)/woody_veg_scale)), 
-    on="species"]
+print("starting occupancy calculation:")
+print(Sys.time() - start)
+
+## 20 km2 is 113 * 113 cells
+dt_ranges[,`:=`(occ = 0,
+                p = 0,
+                id_cl = clump_id_cell(id_cell, 2),
+                id_sr = clump_id_cell(id_cell, 100))]
+
+max_cl <- max(dt_ranges$id_cl)
+max_sr <- max(dt_ranges$id_sr)
 
 
-dt_ranges
-
-## visual check 
-library(stars)
-readRDS("outputs/")
-#[,dt_ranges[dt_coef, on="species"][
-dt_ranges[dt_coef, occ := lpo_forest + i.relev_term * ele + i.relev2_term * ele^2, 
-          on = "species"]
-
-dt_ranges[species == "Aburria_aburri"]
-lc$species <- NA
-lc[["species"]][dt_ranges[species == "Aburria_aburri", id_cell]] <- 
-    dt_ranges[species == "Aburria_aburri", occ]
-
-
-
-function(elev, elev_median, elev_breadth)
-(elev - elev_median)/elev_breadth
-# what is the calculation?
-occ_pasture 
-
-dt_cov <- lc_dt
+for(i in 1:28) {
+    print(i)
+    print(paste0("elapsed time: ", Sys.time() - start))
+    
+    dt_ranges[dt_coef[draw == i,], 
+              occ := i.lpo + 
+                  i.relev_term * relev +
+                  i.relev2_term * relev^2 +
+                  # pasture
+                  (1 - fc/100) * (i.pasture * 1) + 
+                  (1 - fc/100) * (i.woody_veg_sc_term * woody_veg_sc) + 
+                  # forest
+                  (fc/100) * (i.pasture * -1) +
+                  (fc/100) * (i.woody_veg_sc_term * (1 - woody_veg_cent)/woody_veg_scale) + 
+                  # spatial terms
+                  rnorm(max_sr, 0, dt_spatial[i, sd_sr])[id_sr], 
+              on="species"]
+    
+    # note rnorm may be over-allocated for some species. 
+    dt_ranges[, p := boot::inv.logit(occ +
+        rnorm(max_cl, 0, dt_spatial[i, sd_sp_cl])[id_cl] + 
+        rnorm(max_sr, 0, dt_spatial[i, sd_sp_sr])[id_sr]), 
+        by = "species"]
+    
+    saveRDS(dt_ranges$p, paste0("outputs/posterior_", i, ".rds"))
+}
