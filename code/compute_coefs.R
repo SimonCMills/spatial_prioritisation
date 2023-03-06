@@ -48,6 +48,9 @@ uc_species <- fd$data %>%
            strata_aerial) %>%
     unique()
 
+# create flocker data object with all necessary info (note: some of this isn't
+# used in generating the prediction, but still needs to be present in the object
+# passed to posterior_linpred)
 uc_full <- uc_species %>%
     mutate(pasture = 0, 
            woody_veg_sc = 0, 
@@ -56,15 +59,12 @@ uc_full <- uc_species %>%
            observer_pt = "SCM") %>%
     filter(!duplicated(species)) # drop the second Grallaria_rufula
 
-uc_full2 <- bind_rows(uc_full %>% mutate(not_forest = -1), 
-                      uc_full %>% mutate(not_forest = 1))
-
 ec <- list(
-    time = matrix(0, nrow(uc_full2), 4)
+    time = matrix(0, nrow(uc_full), 4)
 )
 
-obs <- matrix(0, nrow(uc_full2), 4)
-newdata <- flocker::make_flocker_data(obs, uc_full2, ec)
+obs <- matrix(0, nrow(uc_full), 4)
+newdata <- flocker::make_flocker_data(obs, uc_full, ec)
 
 lpo <- t(
     brms::posterior_linpred(
@@ -73,7 +73,7 @@ lpo <- t(
         ##### TODO: make sure that when fm3 is multi-chain, the draw_ids is getting out the same
         ##### iterations as iter does elsewhere!
         
-        newdata = newdata$data[1:nrow(uc_full2), ], 
+        newdata = newdata$data[1:nrow(uc_full), ], 
         re_formula = ~ (1 + not_forest + woody_veg_sc + relev + relev2 | species) +
             (1 + not_forest | gr(phylo, cov = A)
             )
@@ -88,7 +88,7 @@ relev_term1 <- template_mat %*%
     diag(as.vector(rstan::extract(fit$fit, "b_occ_relev", permuted = FALSE))) 
 
 relev_term2_raw <- rstan::extract(fit$fit, 
-                                  paste0("r_species__occ[", uc_full2$species[uc_index], ",relev]"), 
+                                  paste0("r_species__occ[", uc_full$species[uc_index], ",relev]"), 
                                   permuted = FALSE)
 
 relev_term2 <- cbind(t(relev_term2_raw[,1,]), 
@@ -103,7 +103,7 @@ relev2_term1 <- template_mat %*%
     diag(as.vector(rstan::extract(fit$fit, "b_occ_relev2", permuted = FALSE))) 
 
 relev2_term2_raw <- rstan::extract(fit$fit, 
-                                  paste0("r_species__occ[", uc_full2$species[uc_index], ",relev2]"), 
+                                  paste0("r_species__occ[", uc_full$species[uc_index], ",relev2]"), 
                                   permuted = FALSE)
 
 relev2_term2 <- cbind(t(relev2_term2_raw[,1,]), 
@@ -131,7 +131,7 @@ woody_veg_sc_term1 <- template_mat %*%
     diag(as.vector(rstan::extract(fit$fit, "b_occ_forest_depLow:woody_veg_sc", permuted = FALSE)))
 
 woody_veg_sc_term2_raw <- rstan::extract(fit$fit, 
-                                         paste0("r_species__occ[", uc_full2$species[uc_index], ",woody_veg_sc]"), 
+                                         paste0("r_species__occ[", uc_full$species[uc_index], ",woody_veg_sc]"), 
                                          permuted = FALSE)
 
 woody_veg_sc_term2 <- cbind(t(woody_veg_sc_term2_raw[,1,]), 
@@ -141,16 +141,60 @@ woody_veg_sc_term2 <- cbind(t(woody_veg_sc_term2_raw[,1,]),
 
 woody_veg_sc_term <- woody_veg_sc_term1 + woody_veg_sc_term2
 
-# forest then pasture 
+## forest ----
+# fixed effect terms (interactions with forest dependency)
+pasture_term1 <- template_mat %*%
+    diag(as.vector(rstan::extract(fit$fit, "b_occ_pasture", permuted = FALSE))) +
+    template_mat_HD %*%
+    diag(as.vector(rstan::extract(fit$fit, "b_occ_forest_depHigh:pasture", 
+                                  permuted = FALSE))) +
+    template_mat_MD %*%
+    diag(as.vector(rstan::extract(fit$fit, "b_occ_forest_depMedium:pasture", 
+                                  permuted = FALSE))) +
+    template_mat_LD %*%
+    diag(as.vector(rstan::extract(fit$fit, "b_occ_forest_depLow:pasture", 
+                                  permuted = FALSE)))
+
+# independent random effects
+pasture_term2_raw <- rstan::extract(fit$fit, 
+                                    paste0("r_species__occ[", uc_full$species[uc_index], ",pasture]"), 
+                                    permuted = FALSE)
+
+pasture_term2 <- cbind(t(pasture_term2_raw[,1,]), 
+                       t(pasture_term2_raw[,2,]), 
+                       t(pasture_term2_raw[,3,]),
+                       t(pasture_term2_raw[,4,]))
+
+# phylogenetic effects
+pasture_term3_raw <- rstan::extract(fit$fit, 
+                                    paste0("r_phylo__occ[", uc_full$phylo[uc_index], ",pasture]"), 
+                                    permuted = FALSE)
+
+pasture_term3 <- cbind(t(pasture_term3_raw[,1,]), 
+                       t(pasture_term3_raw[,2,]), 
+                       t(pasture_term3_raw[,3,]),
+                       t(pasture_term3_raw[,4,]))
+
+# 6 species in the phylogeny represent 2 species in contemporary taxonomy (i.e. 
+# map to 12 species)
+# map these 906 phylogenetic species back onto the 912 species in the dataset
+phylo_rnames <- gsub(".*\\[(.*)\\,pasture\\]", "\\1", row.names(pasture_term3))
+phylo_indexing <- match(uc_full$phylo[uc_index], phylo_rnames)
+
+# combine fixed effects and two random effects
+pasture_term <- pasture_term1 + pasture_term2 + pasture_term3[phylo_indexing,]
+
+## save coefficients ----
+# store outputs in single object
 out <- list(species = uc_full$species[uc_index],
-            lpo_forest = lpo[1:(nrow(lpo)/2),],
-            lpo_pasture = lpo[(nrow(lpo)/2 + 1):nrow(lpo),],
+            phylo = uc_full$phylo[uc_index],
+            lpo = lpo,
             relev_term = relev_term,
             relev2_term = relev2_term,
-            woody_veg_sc_term = woody_veg_sc_term)
+            woody_veg_sc_term = woody_veg_sc_term, 
+            pasture = pasture_term)
 
 ## pass elev_median, elev_breadth, and woody_veg scaling through here?
-
 saveRDS(out, "outputs/lpo_and_coefs_EC.rds")
 
 ## spatially varying terms ----
